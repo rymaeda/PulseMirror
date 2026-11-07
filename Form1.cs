@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -16,6 +17,7 @@ namespace PulseMirror
         private readonly ComboBox _verticalScaleComboBox;
         private readonly ComboBox _timebaseComboBox;
         private readonly Label _statusLabel;
+        private readonly Button _saveImageButton;
 
         private IOscilloscope _oscilloscope;
         private CancellationTokenSource _captureLoopCts;
@@ -103,6 +105,15 @@ namespace PulseMirror
             }
             _timebaseComboBox.SelectedIndexChanged += async (s, e) => await TimebaseComboBox_SelectedIndexChangedAsync();
 
+            _saveImageButton = new Button
+            {
+                Text = "Save Image...",
+                Location = new Point(680, 47),
+                Width = 128,
+                Enabled = false
+            };
+            _saveImageButton.Click += (s, e) => SaveImageButton_Click();
+
             _screenPictureBox = new PictureBox
             {
                 Location = new Point(12, 85),
@@ -117,7 +128,7 @@ namespace PulseMirror
             // Read-only, multiline, selectable/copyable log footer. Using a
             // TextBox (instead of a Label) enables text selection and Ctrl+C,
             // which a Label does not support.
-            _logTextBox = new TextBox
+            _logTextBox = new TextBox   
             {
                 Location = new Point(12, 633),
                 Size = new Size(796, 70),
@@ -136,6 +147,7 @@ namespace PulseMirror
             Controls.Add(_verticalScaleComboBox);
             Controls.Add(tScaleLabel);
             Controls.Add(_timebaseComboBox);
+            Controls.Add(_saveImageButton);
             Controls.Add(_screenPictureBox);
             Controls.Add(logLabel);
             Controls.Add(_logTextBox);
@@ -199,6 +211,7 @@ namespace PulseMirror
 
                 _verticalScaleComboBox.Enabled = true;
                 _timebaseComboBox.Enabled = true;
+                _saveImageButton.Enabled = true;
 
                 StartCaptureLoop();
             }
@@ -228,6 +241,7 @@ namespace PulseMirror
             _oscilloscope = null;
             _verticalScaleComboBox.Enabled = false;
             _timebaseComboBox.Enabled = false;
+            _saveImageButton.Enabled = false;
             _connectButton.Text = "Connect";
             _statusLabel.Text = "Disconnected";
             _statusLabel.ForeColor = Color.Firebrick;
@@ -345,8 +359,16 @@ namespace PulseMirror
                     byte[] bmpBytes = await _oscilloscope.GetScreenCaptureAsync();
 
                     using (var stream = new MemoryStream(bmpBytes))
+                    using (var decoded = new Bitmap(stream))
                     {
-                        var bitmap = new Bitmap(stream);
+                        // Clone into a new Bitmap that owns its own pixel data,
+                        // fully detached from the MemoryStream. GDI+ bitmaps
+                        // created directly from a stream keep a lazy reference
+                        // to it; once the stream is disposed (end of this
+                        // 'using' block), any later operation on the bitmap
+                        // (e.g. Clone()/Save() from the Save Image button)
+                        // throws "A generic error occurred in GDI+".
+                        var bitmap = new Bitmap(decoded);
 
                         if (IsHandleCreated && !IsDisposed)
                         {
@@ -404,6 +426,69 @@ namespace PulseMirror
             }
 
             return $"{value:0.##} {unit}";
+        }
+
+        /// <summary>
+        /// Saves the currently displayed oscilloscope screen capture to disk
+        /// in a format chosen via the file dialog's extension (PNG, JPEG or BMP).
+        /// </summary>
+        private void SaveImageButton_Click()
+        {
+            if (_screenPictureBox.Image == null)
+            {
+                AppendLog("No image to save.");
+                return;
+            }
+
+            using (var dialog = new SaveFileDialog
+            {
+                Title = "Save Screen Capture",
+                Filter = "PNG Image (*.png)|*.png|JPEG Image (*.jpg)|*.jpg|Bitmap Image (*.bmp)|*.bmp",
+                FileName = $"PulseMirror_{DateTime.Now:yyyyMMdd_HHmmss}.png",
+                DefaultExt = "png",
+                AddExtension = true
+            })
+            {
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                {
+                    return;
+                }
+
+                try
+                {
+                    ImageFormat format = GetImageFormatFromExtension(dialog.FileName);
+
+                    // Clone before saving: the PictureBox's Image may be swapped
+                    // out by the capture loop on a background thread at any time.
+                    using (var snapshot = (Image)_screenPictureBox.Image.Clone())
+                    {
+                        snapshot.Save(dialog.FileName, format);
+                    }
+
+                    AppendLog($"Image saved to '{dialog.FileName}'.");
+                }
+                catch (Exception ex)
+                {
+                    AppendLog($"ERROR saving image: {ex.Message}");
+                    MessageBox.Show(this, ex.Message, "Save Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
+        private static ImageFormat GetImageFormatFromExtension(string fileName)
+        {
+            string extension = Path.GetExtension(fileName)?.ToLowerInvariant();
+            switch (extension)
+            {
+                case ".jpg":
+                case ".jpeg":
+                    return ImageFormat.Jpeg;
+                case ".bmp":
+                    return ImageFormat.Bmp;
+                case ".png":
+                default:
+                    return ImageFormat.Png;
+            }
         }
 
         private async void Form1_FormClosing(object sender, FormClosingEventArgs e)
