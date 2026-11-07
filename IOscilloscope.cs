@@ -19,6 +19,10 @@ namespace PulseMirror.Instruments
 
         Task SetChannelScaleAsync(int channel, double scale);
 
+        Task<bool> GetChannelEnabledAsync(int channel);
+
+        Task SetChannelEnabledAsync(int channel, bool enabled);
+
         Task<double> GetTimebaseAsync();
 
         Task SetTimebaseAsync(double scale);

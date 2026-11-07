@@ -18,6 +18,8 @@ namespace PulseMirror
         private readonly ComboBox _timebaseComboBox;
         private readonly Label _statusLabel;
         private readonly Button _saveImageButton;
+        private readonly CheckBox _channel2EnabledCheckBox;
+        private readonly ComboBox _channel2ScaleComboBox;
 
         private IOscilloscope _oscilloscope;
         private CancellationTokenSource _captureLoopCts;
@@ -80,8 +82,8 @@ namespace PulseMirror
             var vScaleLabel = new Label { Text = "CH1 V/div:", Location = new Point(12, 50), AutoSize = true };
             _verticalScaleComboBox = new ComboBox
             {
-                Location = new Point(110, 47),
-                Width = 100,
+                Location = new Point(90, 47),
+                Width = 90,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Enabled = false
             };
@@ -91,11 +93,11 @@ namespace PulseMirror
             }
             _verticalScaleComboBox.SelectedIndexChanged += async (s, e) => await VerticalScaleComboBox_SelectedIndexChangedAsync();
 
-            var tScaleLabel = new Label { Text = "Timebase s/div:", Location = new Point(230, 50), AutoSize = true };
+            var tScaleLabel = new Label { Text = "Timebase s/div:", Location = new Point(195, 50), AutoSize = true };
             _timebaseComboBox = new ComboBox
             {
-                Location = new Point(340, 47),
-                Width = 120,
+                Location = new Point(290, 47),
+                Width = 110,
                 DropDownStyle = ComboBoxStyle.DropDownList,
                 Enabled = false
             };
@@ -104,6 +106,29 @@ namespace PulseMirror
                 _timebaseComboBox.Items.Add(FormatScale(scale, "s"));
             }
             _timebaseComboBox.SelectedIndexChanged += async (s, e) => await TimebaseComboBox_SelectedIndexChangedAsync();
+
+            _channel2EnabledCheckBox = new CheckBox
+            {
+                Text = "Enable CH2",
+                Location = new Point(410, 49),
+                AutoSize = true,
+                Enabled = false
+            };
+            _channel2EnabledCheckBox.CheckedChanged += async (s, e) => await Channel2EnabledCheckBox_CheckedChangedAsync();
+
+            var vScale2Label = new Label { Text = "CH2 V/div:", Location = new Point(505, 50), AutoSize = true };
+            _channel2ScaleComboBox = new ComboBox
+            {
+                Location = new Point(580, 47),
+                Width = 90,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Enabled = false
+            };
+            foreach (var scale in VerticalScales)
+            {
+                _channel2ScaleComboBox.Items.Add(FormatScale(scale, "V"));
+            }
+            _channel2ScaleComboBox.SelectedIndexChanged += async (s, e) => await Channel2ScaleComboBox_SelectedIndexChangedAsync();
 
             _saveImageButton = new Button
             {
@@ -147,6 +172,9 @@ namespace PulseMirror
             Controls.Add(_verticalScaleComboBox);
             Controls.Add(tScaleLabel);
             Controls.Add(_timebaseComboBox);
+            Controls.Add(_channel2EnabledCheckBox);
+            Controls.Add(vScale2Label);
+            Controls.Add(_channel2ScaleComboBox);
             Controls.Add(_saveImageButton);
             Controls.Add(_screenPictureBox);
             Controls.Add(logLabel);
@@ -211,6 +239,7 @@ namespace PulseMirror
 
                 _verticalScaleComboBox.Enabled = true;
                 _timebaseComboBox.Enabled = true;
+                _channel2EnabledCheckBox.Enabled = true;
                 _saveImageButton.Enabled = true;
 
                 StartCaptureLoop();
@@ -241,6 +270,8 @@ namespace PulseMirror
             _oscilloscope = null;
             _verticalScaleComboBox.Enabled = false;
             _timebaseComboBox.Enabled = false;
+            _channel2EnabledCheckBox.Enabled = false;
+            _channel2ScaleComboBox.Enabled = false;
             _saveImageButton.Enabled = false;
             _connectButton.Text = "Connect";
             _statusLabel.Text = "Disconnected";
@@ -261,6 +292,18 @@ namespace PulseMirror
 
                 double tScale = await _oscilloscope.GetTimebaseAsync();
                 SelectClosest(_timebaseComboBox, TimebaseScales, tScale, "s");
+
+                bool ch2Enabled = await _oscilloscope.GetChannelEnabledAsync(2);
+                _channel2EnabledCheckBox.Checked = ch2Enabled;
+                _channel2ScaleComboBox.Enabled = ch2Enabled;
+
+                if (ch2Enabled)
+                {
+                    double ch2Scale = await _oscilloscope.GetChannelScaleAsync(2);
+                    SelectClosest(_channel2ScaleComboBox, VerticalScales, ch2Scale, "V");
+                }
+
+                AppendLog($"CH2 is {(ch2Enabled ? "enabled" : "disabled")} on the instrument.");
             }
             catch (Exception ex)
             {
@@ -333,6 +376,59 @@ namespace PulseMirror
             catch (Exception ex)
             {
                 AppendLog($"ERROR setting timebase: {ex.Message}");
+                MessageBox.Show(this, ex.Message, "Communication Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private async Task Channel2EnabledCheckBox_CheckedChangedAsync()
+        {
+            if (_isSyncingControls || _oscilloscope == null || !_oscilloscope.IsConnected)
+            {
+                return;
+            }
+
+            try
+            {
+                bool enabled = _channel2EnabledCheckBox.Checked;
+                await _oscilloscope.SetChannelEnabledAsync(2, enabled);
+                _channel2ScaleComboBox.Enabled = enabled;
+
+                AppendLog(enabled ? "CH2 enabled." : "CH2 disabled.");
+
+                if (enabled)
+                {
+                    double scale = await _oscilloscope.GetChannelScaleAsync(2);
+                    _isSyncingControls = true;
+                    SelectClosest(_channel2ScaleComboBox, VerticalScales, scale, "V");
+                    _isSyncingControls = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ERROR toggling CH2: {ex.Message}");
+                MessageBox.Show(this, ex.Message, "Communication Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private async Task Channel2ScaleComboBox_SelectedIndexChangedAsync()
+        {
+            if (_isSyncingControls || _oscilloscope == null || !_oscilloscope.IsConnected)
+            {
+                return;
+            }
+
+            try
+            {
+                double scale = VerticalScales[_channel2ScaleComboBox.SelectedIndex];
+                await _oscilloscope.SetChannelScaleAsync(2, scale);
+
+                await Task.Delay(300);
+                double confirmed = await _oscilloscope.GetChannelScaleAsync(2);
+                AppendLog($"Sent {scale:0.######} V/div (CH2), instrument reports {confirmed:0.######} V/div");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ERROR setting CH2 vertical scale: {ex.Message}");
                 MessageBox.Show(this, ex.Message, "Communication Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }

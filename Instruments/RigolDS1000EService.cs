@@ -111,6 +111,24 @@ namespace PulseMirror.Instruments
             await WriteRawAsync($":CHANnel{channel}:SCALe {formattedScale}").ConfigureAwait(false);
         }
 
+        public async Task<bool> GetChannelEnabledAsync(int channel)
+        {
+            EnsureConnected();
+            ValidateChannel(channel);
+
+            string response = await QueryRawAsync($":CHANnel{channel}:DISPlay?").ConfigureAwait(false);
+            return ParseBoolean(response);
+        }
+
+        public async Task SetChannelEnabledAsync(int channel, bool enabled)
+        {
+            EnsureConnected();
+            ValidateChannel(channel);
+
+            string value = enabled ? "ON" : "OFF";
+            await WriteRawAsync($":CHANnel{channel}:DISPlay {value}").ConfigureAwait(false);
+        }
+
         public async Task<double> GetTimebaseAsync()
         {
             EnsureConnected();
@@ -203,6 +221,26 @@ namespace PulseMirror.Instruments
             }
 
             return value;
+        }
+
+        /// <summary>
+        /// Parses boolean-like SCPI responses. The DS1000E may reply with
+        /// "ON"/"OFF" or "1"/"0" depending on firmware/query context.
+        /// </summary>
+        private static bool ParseBoolean(string response)
+        {
+            string trimmed = response.Trim();
+            if (trimmed.Equals("ON", StringComparison.OrdinalIgnoreCase) || trimmed == "1")
+            {
+                return true;
+            }
+
+            if (trimmed.Equals("OFF", StringComparison.OrdinalIgnoreCase) || trimmed == "0")
+            {
+                return false;
+            }
+
+            throw new FormatException($"Unexpected boolean response from instrument: '{response}'.");
         }
 
         public void Dispose()
