@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace PulseMirror.Instruments
@@ -10,6 +11,8 @@ namespace PulseMirror.Instruments
     /// </summary>
     public static class OscilloscopeFactory
     {
+        private static readonly string[] SupportedRigolModels = { "DS1052E", "DS1102E", "DS1000E" };
+
         public static async Task<IOscilloscope> CreateAsync(string resourceName)
         {
             if (string.IsNullOrWhiteSpace(resourceName))
@@ -18,6 +21,7 @@ namespace PulseMirror.Instruments
             }
 
             IScpiTransport transport = ScpiTransportFactory.Create(resourceName);
+            RigolDS1000EService oscilloscope = null;
 
             try
             {
@@ -26,40 +30,35 @@ namespace PulseMirror.Instruments
                 await transport.WriteLineAsync("*IDN?").ConfigureAwait(false);
                 string idn = await transport.ReadLineAsync().ConfigureAwait(false);
 
-                var oscilloscope = CreateForIdentity(idn);
-
-                var parts = idn.Split(',');
-                string model = parts.Length > 1 ? parts[1].Trim() : "Unknown";
-                string serial = parts.Length > 2 ? parts[2].Trim() : "Unknown";
-
-                oscilloscope.AttachTransport(transport, model, serial);
+                InstrumentIdentity identity = InstrumentIdentity.Parse(idn);
+                oscilloscope = CreateForIdentity(identity);
+                oscilloscope.AttachTransport(transport, identity.Model, identity.Serial);
 
                 return oscilloscope;
             }
             catch (Exception ex)
             {
+                // Disposing the service also disposes the transport if it was attached
+                // (Dispose is idempotent, so disposing both is safe).
+                oscilloscope?.Dispose();
                 transport.Dispose();
+
                 throw new InvalidOperationException(
                     $"Failed to identify instrument at '{resourceName}'.", ex);
             }
         }
 
-        private static RigolDS1000EService CreateForIdentity(string idn)
+        private static RigolDS1000EService CreateForIdentity(InstrumentIdentity identity)
         {
-            if (string.IsNullOrWhiteSpace(idn))
-            {
-                throw new InvalidOperationException("Instrument returned an empty '*IDN?' response.");
-            }
+            string upper = identity.Raw.ToUpperInvariant();
 
-            string upper = idn.ToUpperInvariant();
-
-            if (upper.Contains("RIGOL") &&
-                (upper.Contains("DS1052E") || upper.Contains("DS1000E") || upper.Contains("DS1102E")))
+            if (upper.Contains("RIGOL") && SupportedRigolModels.Any(upper.Contains))
             {
                 return new RigolDS1000EService();
             }
 
-            throw new NotSupportedException($"No oscilloscope driver available for identity string: '{idn}'.");
+            throw new NotSupportedException(
+                $"No oscilloscope driver available for identity string: '{identity.Raw}'.");
         }
     }
 }

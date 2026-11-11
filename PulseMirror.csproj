@@ -52,7 +52,11 @@
     <Compile Include="Form1.Designer.cs">
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>
+    <Compile Include="Instruments\InstrumentIdentity.cs" />
+    <Compile Include="Instruments\IOscilloscope.cs" />
     <Compile Include="Instruments\IScpiTransport.cs" />
+    <Compile Include="Instruments\MeasurementQuantity.cs" />
+    <Compile Include="Instruments\MeasurementType.cs" />
     <Compile Include="Instruments\OscilloscopeFactory.cs" />
     <Compile Include="Instruments\RigolDS1000EService.cs" />
     <Compile Include="Instruments\ScpiBlockReader.cs" />

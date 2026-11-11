@@ -20,9 +20,18 @@ namespace PulseMirror
         private readonly Button _saveImageButton;
         private readonly CheckBox _channel2EnabledCheckBox;
         private readonly ComboBox _channel2ScaleComboBox;
+        private readonly CheckBox _channel1EnabledCheckBox;
+        private readonly CheckBox _showAllMeasurementsCheckBox;
+        private readonly GroupBox _measurementsGroupBox;
+        private readonly ComboBox _measurementChannelComboBox;
+        private readonly CheckBox _readAllMeasurementsCheckBox;
+        private readonly ListView _measurementsListView;
+        private bool _isUpdatingMeasurementSelection;
 
         private IOscilloscope _oscilloscope;
         private CancellationTokenSource _captureLoopCts;
+        private Task _captureLoopTask;
+        private bool _isClosing;
         private bool _isSyncingControls;
         private TextBox _logTextBox;
         private static readonly double[] VerticalScales =
@@ -48,7 +57,7 @@ namespace PulseMirror
             InitializeComponent();
 
             Text = "PulseMirror - Oscilloscope Viewer";
-            ClientSize = new Size(820, 720);
+            ClientSize = new Size(1090, 720);
 
             // Fixed-size window: prevents accidental resizing/maximizing that
             // would otherwise require reflowing all the manually-positioned controls.
@@ -139,10 +148,82 @@ namespace PulseMirror
             };
             _saveImageButton.Click += (s, e) => SaveImageButton_Click();
 
+            _channel1EnabledCheckBox = new CheckBox
+            {
+                Text = "Enable CH1",
+                Location = new Point(12, 82),
+                AutoSize = true,
+                Enabled = false
+            };
+            _channel1EnabledCheckBox.CheckedChanged += async (s, e) => await Channel1EnabledCheckBox_CheckedChangedAsync();
+
+            _showAllMeasurementsCheckBox = new CheckBox
+            {
+                Text = "Show all measurements",
+                Location = new Point(120, 82),
+                AutoSize = true,
+                Enabled = false
+            };
+            _showAllMeasurementsCheckBox.CheckedChanged += async (s, e) =>
+                await MeasurementCheckBox_CheckedChangedAsync(MeasurementType.All, _showAllMeasurementsCheckBox);
+
+            var measurementChannelLabel = new Label { Text = "Channel:", Location = new Point(10, 24), AutoSize = true };
+            _measurementChannelComboBox = new ComboBox
+            {
+                Location = new Point(70, 21),
+                Width = 80,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            _measurementChannelComboBox.Items.Add("CH1");
+            _measurementChannelComboBox.Items.Add("CH2");
+            _measurementChannelComboBox.SelectedIndex = 0;
+
+            _readAllMeasurementsCheckBox = new CheckBox
+            {
+                Text = "Read all",
+                Location = new Point(10, 52),
+                AutoSize = true
+            };
+
+            _measurementsListView = new ListView
+            {
+                Location = new Point(10, 78),
+                Size = new Size(238, 530),
+                View = View.Details,
+                CheckBoxes = true,
+                FullRowSelect = true,
+                MultiSelect = false,
+                HeaderStyle = ColumnHeaderStyle.Nonclickable
+            };
+            _measurementsListView.Columns.Add("Measurement", 120);
+            _measurementsListView.Columns.Add("Value", 100, HorizontalAlignment.Right);
+
+            foreach (MeasurementQuantity quantity in Enum.GetValues(typeof(MeasurementQuantity)))
+            {
+                var item = new ListViewItem(quantity.ToString()) { Tag = quantity };
+                item.SubItems.Add("-");
+                _measurementsListView.Items.Add(item);
+            }
+
+            _readAllMeasurementsCheckBox.CheckedChanged += (s, e) => ReadAllMeasurementsCheckBox_CheckedChanged();
+            _measurementsListView.ItemChecked += (s, e) => MeasurementsListView_ItemChecked(e);
+
+            _measurementsGroupBox = new GroupBox
+            {
+                Text = "Measurements (SCPI)",
+                Location = new Point(820, 85),
+                Size = new Size(258, 618),
+                Enabled = false
+            };
+            _measurementsGroupBox.Controls.Add(measurementChannelLabel);
+            _measurementsGroupBox.Controls.Add(_measurementChannelComboBox);
+            _measurementsGroupBox.Controls.Add(_readAllMeasurementsCheckBox);
+            _measurementsGroupBox.Controls.Add(_measurementsListView);
+
             _screenPictureBox = new PictureBox
             {
-                Location = new Point(12, 85),
-                Size = new Size(796, 520),
+                Location = new Point(12, 230),
+                Size = new Size(796, 375),
                 BorderStyle = BorderStyle.FixedSingle,
                 SizeMode = PictureBoxSizeMode.Zoom,
                 BackColor = Color.Black
@@ -179,6 +260,9 @@ namespace PulseMirror
             Controls.Add(_screenPictureBox);
             Controls.Add(logLabel);
             Controls.Add(_logTextBox);
+            Controls.Add(_channel1EnabledCheckBox);
+            Controls.Add(_showAllMeasurementsCheckBox);
+            Controls.Add(_measurementsGroupBox);
 
             FormClosing += Form1_FormClosing;
 
@@ -241,6 +325,14 @@ namespace PulseMirror
                 _timebaseComboBox.Enabled = true;
                 _channel2EnabledCheckBox.Enabled = true;
                 _saveImageButton.Enabled = true;
+                _channel1EnabledCheckBox.Enabled = true;
+                _showAllMeasurementsCheckBox.Enabled = true;
+                _measurementsGroupBox.Enabled = true;
+                _timebaseComboBox.Enabled = true;
+                _channel2EnabledCheckBox.Enabled = true;
+                _saveImageButton.Enabled = true;
+
+                await _oscilloscope.ReturnToLocalAsync();
 
                 StartCaptureLoop();
             }
@@ -260,7 +352,7 @@ namespace PulseMirror
 
         private async Task DisconnectAsync()
         {
-            StopCaptureLoop();
+            await StopCaptureLoopAsync();
 
             if (_oscilloscope is IDisposable disposable)
             {
@@ -273,13 +365,16 @@ namespace PulseMirror
             _channel2EnabledCheckBox.Enabled = false;
             _channel2ScaleComboBox.Enabled = false;
             _saveImageButton.Enabled = false;
+            _measurementsGroupBox.Enabled = false;
+            foreach (ListViewItem item in _measurementsListView.Items)
+            {
+                item.SubItems[1].Text = "-";
+            }
             _connectButton.Text = "Connect";
             _statusLabel.Text = "Disconnected";
             _statusLabel.ForeColor = Color.Firebrick;
             _screenPictureBox.Image = null;
             AppendLog("Disconnected.");
-
-            await Task.CompletedTask;
         }
 
         private async Task SyncControlsWithInstrumentAsync()
@@ -302,6 +397,10 @@ namespace PulseMirror
                     double ch2Scale = await _oscilloscope.GetChannelScaleAsync(2);
                     SelectClosest(_channel2ScaleComboBox, VerticalScales, ch2Scale, "V");
                 }
+
+                bool ch1Enabled = await _oscilloscope.GetChannelEnabledAsync(1);
+                _channel1EnabledCheckBox.Checked = ch1Enabled;
+                _verticalScaleComboBox.Enabled = ch1Enabled;
 
                 AppendLog($"CH2 is {(ch2Enabled ? "enabled" : "disabled")} on the instrument.");
             }
@@ -399,8 +498,14 @@ namespace PulseMirror
                 {
                     double scale = await _oscilloscope.GetChannelScaleAsync(2);
                     _isSyncingControls = true;
-                    SelectClosest(_channel2ScaleComboBox, VerticalScales, scale, "V");
-                    _isSyncingControls = false;
+                    try
+                    {
+                        SelectClosest(_channel2ScaleComboBox, VerticalScales, scale, "V");
+                    }
+                    finally
+                    {
+                        _isSyncingControls = false;
+                    }
                 }
             }
             catch (Exception ex)
@@ -433,37 +538,295 @@ namespace PulseMirror
             }
         }
 
+        private async Task Channel1EnabledCheckBox_CheckedChangedAsync()
+        {
+            if (_isSyncingControls || _oscilloscope == null || !_oscilloscope.IsConnected)
+            {
+                return;
+            }
+
+            bool enabled = _channel1EnabledCheckBox.Checked;
+
+            try
+            {
+                await _oscilloscope.SetChannelEnabledAsync(1, enabled);
+                _verticalScaleComboBox.Enabled = enabled;
+                AppendLog(enabled ? "CH1 enabled." : "CH1 disabled.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ERROR toggling CH1: {ex.Message}");
+                MessageBox.Show(this, ex.Message, "Communication Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+                // Revert the checkbox to keep the UI consistent with the instrument.
+                SetCheckedSilently(_channel1EnabledCheckBox, !enabled);
+            }
+        }
+
+        private async Task MeasurementCheckBox_CheckedChangedAsync(MeasurementType measurement, CheckBox checkBox)
+        {
+            if (_isSyncingControls || _oscilloscope == null || !_oscilloscope.IsConnected)
+            {
+                return;
+            }
+
+            bool enabled = checkBox.Checked;
+
+            try
+            {
+                await _oscilloscope.SetMeasurementEnabledAsync(measurement, enabled);
+                AppendLog($"Measurement '{measurement}' {(enabled ? "shown" : "hidden")}.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ERROR toggling measurement '{measurement}': {ex.Message}");
+                MessageBox.Show(this, ex.Message, "Communication Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                SetCheckedSilently(checkBox, !enabled);
+            }
+        }
+
+        private void SetCheckedSilently(CheckBox checkBox, bool value)
+        {
+            bool previous = _isSyncingControls;
+            _isSyncingControls = true;
+            try
+            {
+                checkBox.Checked = value;
+            }
+            finally
+            {
+                _isSyncingControls = previous;
+            }
+        }
+
+        private void ReadAllMeasurementsCheckBox_CheckedChanged()
+        {
+            if (_isUpdatingMeasurementSelection)
+            {
+                return;
+            }
+
+            _isUpdatingMeasurementSelection = true;
+            try
+            {
+                foreach (ListViewItem item in _measurementsListView.Items)
+                {
+                    item.Checked = _readAllMeasurementsCheckBox.Checked;
+
+                    if (!item.Checked)
+                    {
+                        item.SubItems[1].Text = "-";
+                    }
+                }
+            }
+            finally
+            {
+                _isUpdatingMeasurementSelection = false;
+            }
+        }
+
+        private void MeasurementsListView_ItemChecked(ItemCheckedEventArgs e)
+        {
+            if (_isUpdatingMeasurementSelection)
+            {
+                return;
+            }
+
+            _isUpdatingMeasurementSelection = true;
+            try
+            {
+                if (!e.Item.Checked)
+                {
+                    e.Item.SubItems[1].Text = "-";
+                }
+
+                bool allChecked = true;
+                foreach (ListViewItem item in _measurementsListView.Items)
+                {
+                    if (!item.Checked)
+                    {
+                        allChecked = false;
+                        break;
+                    }
+                }
+
+                _readAllMeasurementsCheckBox.Checked = allChecked;
+            }
+            finally
+            {
+                _isUpdatingMeasurementSelection = false;
+            }
+        }
+
+        /// <summary>
+        /// Reads the checked measurements one by one. Runs on the UI thread
+        /// (the awaits resume on the captured synchronization context).
+        /// </summary>
+        private async Task UpdateMeasurementsAsync(IOscilloscope oscilloscope, CancellationToken token)
+        {
+            int channel = _measurementChannelComboBox.SelectedIndex + 1;
+
+            foreach (ListViewItem item in _measurementsListView.Items)
+            {
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                if (!item.Checked)
+                {
+                    continue;
+                }
+
+                var quantity = (MeasurementQuantity)item.Tag;
+
+                try
+                {
+                    double value = await oscilloscope.GetMeasurementAsync(channel, quantity);
+                    item.SubItems[1].Text = FormatMeasurement(quantity, value);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    if (token.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    // Log only the first failure of each item to avoid flooding the log every cycle.
+                    if (item.SubItems[1].Text != "error")
+                    {
+                        AppendLog($"ERROR reading {item.Text}: {ex.Message}");
+                    }
+
+                    item.SubItems[1].Text = "error";
+                }
+            }
+        }
+
+        private static string GetMeasurementUnit(MeasurementQuantity quantity)
+        {
+            switch (quantity)
+            {
+                case MeasurementQuantity.Vpp:
+                case MeasurementQuantity.Vmax:
+                case MeasurementQuantity.Vmin:
+                case MeasurementQuantity.Vamplitude:
+                case MeasurementQuantity.Vtop:
+                case MeasurementQuantity.Vbase:
+                case MeasurementQuantity.Vaverage:
+                case MeasurementQuantity.Vrms:
+                    return "V";
+                case MeasurementQuantity.Frequency:
+                    return "Hz";
+                case MeasurementQuantity.Period:
+                case MeasurementQuantity.RiseTime:
+                case MeasurementQuantity.FallTime:
+                case MeasurementQuantity.PositiveWidth:
+                case MeasurementQuantity.NegativeWidth:
+                    return "s";
+                default:
+                    return string.Empty; // Overshoot, preshoot and duty cycle: raw instrument value.
+            }
+        }
+
+        private static string FormatMeasurement(MeasurementQuantity quantity, double value)
+        {
+            if (double.IsNaN(value))
+            {
+                return "---";
+            }
+
+            string unit = GetMeasurementUnit(quantity);
+
+            if (unit.Length == 0)
+            {
+                return $"{value:G4}";
+            }
+
+            if (value == 0)
+            {
+                return $"0 {unit}";
+            }
+
+            string[] prefixes = { "n", "µ", "m", "", "k", "M", "G" };
+            int index = 3;
+            double scaled = value;
+
+            while (Math.Abs(scaled) >= 1000 && index < prefixes.Length - 1)
+            {
+                scaled /= 1000;
+                index++;
+            }
+
+            while (Math.Abs(scaled) < 1 && index > 0)
+            {
+                scaled *= 1000;
+                index--;
+            }
+
+            return $"{scaled:0.###} {prefixes[index]}{unit}";
+        }
+
         private void StartCaptureLoop()
         {
+            // Pass the instance explicitly: the loop must never read the
+            // mutable _oscilloscope field, which is nulled on disconnect.
+            var oscilloscope = _oscilloscope;
             _captureLoopCts = new CancellationTokenSource();
-            _ = RunCaptureLoopAsync(_captureLoopCts.Token);
+            _captureLoopTask = RunCaptureLoopAsync(oscilloscope, _captureLoopCts.Token);
         }
 
-        private void StopCaptureLoop()
+        private async Task StopCaptureLoopAsync()
         {
-            _captureLoopCts?.Cancel();
-            _captureLoopCts?.Dispose();
+            var cts = _captureLoopCts;
+            var task = _captureLoopTask;
             _captureLoopCts = null;
+            _captureLoopTask = null;
+
+            if (cts == null)
+            {
+                return;
+            }
+
+            cts.Cancel();
+
+            try
+            {
+                if (task != null)
+                {
+                    await task; // Wait for any in-flight capture to finish before disposing.
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            finally
+            {
+                cts.Dispose();
+            }
         }
 
-        private async Task RunCaptureLoopAsync(CancellationToken token)
+        private async Task RunCaptureLoopAsync(IOscilloscope oscilloscope, CancellationToken token)
         {
             while (!token.IsCancellationRequested)
             {
                 try
                 {
-                    byte[] bmpBytes = await _oscilloscope.GetScreenCaptureAsync();
+                    byte[] bmpBytes = await oscilloscope.GetScreenCaptureAsync();
+
+                    if (token.IsCancellationRequested)
+                    {
+                        break;
+                    }
 
                     using (var stream = new MemoryStream(bmpBytes))
                     using (var decoded = new Bitmap(stream))
                     {
-                        // Clone into a new Bitmap that owns its own pixel data,
-                        // fully detached from the MemoryStream. GDI+ bitmaps
-                        // created directly from a stream keep a lazy reference
-                        // to it; once the stream is disposed (end of this
-                        // 'using' block), any later operation on the bitmap
-                        // (e.g. Clone()/Save() from the Save Image button)
-                        // throws "A generic error occurred in GDI+".
+                        // Clone into a Bitmap that owns its pixel data, detached from the stream.
                         var bitmap = new Bitmap(decoded);
 
                         if (IsHandleCreated && !IsDisposed)
@@ -481,8 +844,18 @@ namespace PulseMirror
                         }
                     }
                 }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
                 catch (Exception ex)
                 {
+                    // Errors caused by shutting down are expected and must not reach the UI.
+                    if (token.IsCancellationRequested)
+                    {
+                        break;
+                    }
+
                     if (IsHandleCreated && !IsDisposed)
                     {
                         BeginInvoke(new Action(() =>
@@ -493,35 +866,17 @@ namespace PulseMirror
                     }
                 }
 
+                await UpdateMeasurementsAsync(oscilloscope, token);
+
                 try
                 {
                     await Task.Delay(TimeSpan.FromSeconds(1), token);
                 }
-                catch (TaskCanceledException)
+                catch (OperationCanceledException)
                 {
                     break;
                 }
             }
-        }
-
-        private static string FormatScale(double value, string unit)
-        {
-            if (value < 0.000001)
-            {
-                return $"{value * 1_000_000_000:0.##} n{unit}";
-            }
-
-            if (value < 0.001)
-            {
-                return $"{value * 1_000_000:0.##} µ{unit}";
-            }
-
-            if (value < 1)
-            {
-                return $"{value * 1000:0.##} m{unit}";
-            }
-
-            return $"{value:0.##} {unit}";
         }
 
         /// <summary>
@@ -589,7 +944,51 @@ namespace PulseMirror
 
         private async void Form1_FormClosing(object sender, FormClosingEventArgs e)
         {
-            await DisconnectAsync();
+            if (_isClosing)
+            {
+                return; // Second pass, triggered by Close() below.
+            }
+
+            if (_oscilloscope == null && _captureLoopCts == null)
+            {
+                return;
+            }
+
+            // Hold the form open until the capture loop stops and the transport is released.
+            e.Cancel = true;
+            _isClosing = true;
+
+            try
+            {
+                if (_oscilloscope != null && _oscilloscope.IsConnected)
+                {
+                    try
+                    {
+                        _oscilloscope.ReturnToLocalAsync().Wait(1000);
+                    }
+                    catch (Exception)
+                    {
+                        // Ignore: the instrument may already be gone while closing.
+                    }
+                }
+
+                await DisconnectAsync();
+            }
+            finally
+            {
+                Close();
+            }
+        }
+
+        private static string FormatScale(double scale, string unit)
+        {
+            if (scale < 1e-6)
+                return $"{scale * 1e9:0.##} n{unit}/div";
+            if (scale < 1e-3)
+                return $"{scale * 1e6:0.##} µ{unit}/div";
+            if (scale < 1)
+                return $"{scale * 1e3:0.##} m{unit}/div";
+            return $"{scale:0.##} {unit}/div";
         }
     }
 }
