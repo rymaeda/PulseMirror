@@ -2,6 +2,7 @@
 <Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
     <ProjectGuid>{F954633E-F3BD-4665-8F77-2D0078CD719A}</ProjectGuid>
@@ -62,11 +63,10 @@
     <Compile Include="Instruments\ScpiBlockReader.cs" />
     <Compile Include="Instruments\ScpiTransportFactory.cs" />
     <Compile Include="Instruments\UsbTmc\UsbTmcTransport.cs" />
-    <Compile Include="IOscilloscope.cs" />
-    <Compile Include="NativeMethods.cs" />
+    <Compile Include="Instruments\NativeMethods.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="UsbDeviceFinder.cs" />
+    <Compile Include="Instruments\UsbDeviceFinder.cs" />
     <Compile Include="WinUsbDevice.cs" />
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>

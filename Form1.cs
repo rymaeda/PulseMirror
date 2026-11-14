@@ -26,6 +26,8 @@ namespace PulseMirror
         private readonly ComboBox _measurementChannelComboBox;
         private readonly CheckBox _readAllMeasurementsCheckBox;
         private readonly ListView _measurementsListView;
+        private readonly NumericUpDown _channel1OffsetNumeric;
+        private readonly NumericUpDown _channel2OffsetNumeric;
         private bool _isUpdatingMeasurementSelection;
 
         private IOscilloscope _oscilloscope;
@@ -264,6 +266,19 @@ namespace PulseMirror
             Controls.Add(_showAllMeasurementsCheckBox);
             Controls.Add(_measurementsGroupBox);
 
+            var offset1Label = new Label { Text = "CH1 Offset (V):", Location = new Point(12, 120), AutoSize = true };
+_channel1OffsetNumeric = CreateOffsetNumeric(new Point(110, 117));
+_channel1OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeric_ValueChangedAsync(1, _channel1OffsetNumeric);
+
+var offset2Label = new Label { Text = "CH2 Offset (V):", Location = new Point(250, 120), AutoSize = true };
+_channel2OffsetNumeric = CreateOffsetNumeric(new Point(348, 117));
+_channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeric_ValueChangedAsync(2, _channel2OffsetNumeric);
+
+            Controls.Add(offset1Label);
+            Controls.Add(_channel1OffsetNumeric);
+            Controls.Add(offset2Label);
+            Controls.Add(_channel2OffsetNumeric);
+
             FormClosing += Form1_FormClosing;
 
             var resourceToolTip = new ToolTip();
@@ -327,6 +342,8 @@ namespace PulseMirror
                 _saveImageButton.Enabled = true;
                 _channel1EnabledCheckBox.Enabled = true;
                 _showAllMeasurementsCheckBox.Enabled = true;
+                _channel1OffsetNumeric.Enabled = _channel1EnabledCheckBox.Checked;
+                _channel2OffsetNumeric.Enabled = _channel2EnabledCheckBox.Checked;
                 _measurementsGroupBox.Enabled = true;
                 _timebaseComboBox.Enabled = true;
                 _channel2EnabledCheckBox.Enabled = true;
@@ -364,6 +381,8 @@ namespace PulseMirror
             _timebaseComboBox.Enabled = false;
             _channel2EnabledCheckBox.Enabled = false;
             _channel2ScaleComboBox.Enabled = false;
+            _channel1OffsetNumeric.Enabled = false;
+            _channel2OffsetNumeric.Enabled = false;
             _saveImageButton.Enabled = false;
             _measurementsGroupBox.Enabled = false;
             foreach (ListViewItem item in _measurementsListView.Items)
@@ -401,7 +420,12 @@ namespace PulseMirror
                 bool ch1Enabled = await _oscilloscope.GetChannelEnabledAsync(1);
                 _channel1EnabledCheckBox.Checked = ch1Enabled;
                 _verticalScaleComboBox.Enabled = ch1Enabled;
+                SetNumericValueClamped(_channel1OffsetNumeric, await _oscilloscope.GetChannelOffsetAsync(1));
 
+                if (ch2Enabled)
+                {
+                    SetNumericValueClamped(_channel2OffsetNumeric, await _oscilloscope.GetChannelOffsetAsync(2));
+                }
                 AppendLog($"CH2 is {(ch2Enabled ? "enabled" : "disabled")} on the instrument.");
             }
             catch (Exception ex)
@@ -491,6 +515,7 @@ namespace PulseMirror
                 bool enabled = _channel2EnabledCheckBox.Checked;
                 await _oscilloscope.SetChannelEnabledAsync(2, enabled);
                 _channel2ScaleComboBox.Enabled = enabled;
+                _channel2OffsetNumeric.Enabled = enabled;
 
                 AppendLog(enabled ? "CH2 enabled." : "CH2 disabled.");
 
@@ -551,6 +576,7 @@ namespace PulseMirror
             {
                 await _oscilloscope.SetChannelEnabledAsync(1, enabled);
                 _verticalScaleComboBox.Enabled = enabled;
+                _channel1OffsetNumeric.Enabled = enabled;
                 AppendLog(enabled ? "CH1 enabled." : "CH1 disabled.");
             }
             catch (Exception ex)
@@ -990,5 +1016,48 @@ namespace PulseMirror
                 return $"{scale * 1e3:0.##} m{unit}/div";
             return $"{scale:0.##} {unit}/div";
         }
+
+private static NumericUpDown CreateOffsetNumeric(Point location)
+{
+    return new NumericUpDown
+    {
+        Location = location,
+        Width = 90,
+        DecimalPlaces = 3,
+        Increment = 0.01m,
+        Minimum = -100m,
+        Maximum = 100m,
+        Enabled = false
+    };
+}
+
+private async Task ChannelOffsetNumeric_ValueChangedAsync(int channel, NumericUpDown numeric)
+{
+    if (_isSyncingControls || _oscilloscope == null || !_oscilloscope.IsConnected)
+    {
+        return;
+    }
+
+    try
+    {
+        double offset = (double)numeric.Value;
+        await _oscilloscope.SetChannelOffsetAsync(channel, offset);
+
+        await Task.Delay(300);
+        double confirmed = await _oscilloscope.GetChannelOffsetAsync(channel);
+        AppendLog($"Sent CH{channel} offset {offset:0.######} V, instrument reports {confirmed:0.######} V");
+    }
+    catch (Exception ex)
+    {
+        AppendLog($"ERROR setting CH{channel} offset: {ex.Message}");
+        MessageBox.Show(this, ex.Message, "Communication Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+}
+
+private static void SetNumericValueClamped(NumericUpDown numeric, double value)
+{
+    decimal v = (decimal)value;
+    numeric.Value = Math.Max(numeric.Minimum, Math.Min(numeric.Maximum, v));
+}
     }
 }
