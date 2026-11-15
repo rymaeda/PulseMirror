@@ -43,6 +43,7 @@ namespace PulseMirror
 
         private static readonly double[] TimebaseScales =
         {
+            0.000000002,
             0.000000005, 0.00000001, 0.00000002, 0.00000005,
             0.0000001, 0.0000002, 0.0000005,
             0.000001, 0.000002, 0.000005,
@@ -59,7 +60,7 @@ namespace PulseMirror
             InitializeComponent();
 
             Text = "PulseMirror - Oscilloscope Viewer";
-            ClientSize = new Size(1090, 720);
+            ClientSize = new Size(1180, 720);
 
             // Fixed-size window: prevents accidental resizing/maximizing that
             // would otherwise require reflowing all the manually-positioned controls.
@@ -183,14 +184,14 @@ namespace PulseMirror
             _readAllMeasurementsCheckBox = new CheckBox
             {
                 Text = "Read all",
-                Location = new Point(10, 52),
+                Location = new Point(10, 24),
                 AutoSize = true
             };
 
             _measurementsListView = new ListView
             {
-                Location = new Point(10, 78),
-                Size = new Size(238, 530),
+                Location = new Point(10, 50),
+                Size = new Size(328, 400),
                 View = View.Details,
                 CheckBoxes = true,
                 FullRowSelect = true,
@@ -198,11 +199,13 @@ namespace PulseMirror
                 HeaderStyle = ColumnHeaderStyle.Nonclickable
             };
             _measurementsListView.Columns.Add("Measurement", 120);
-            _measurementsListView.Columns.Add("Value", 100, HorizontalAlignment.Right);
+            _measurementsListView.Columns.Add("CH1", 95, HorizontalAlignment.Right);
+            _measurementsListView.Columns.Add("CH2", 95, HorizontalAlignment.Right);
 
             foreach (MeasurementQuantity quantity in Enum.GetValues(typeof(MeasurementQuantity)))
             {
                 var item = new ListViewItem(quantity.ToString()) { Tag = quantity };
+                item.SubItems.Add("-");
                 item.SubItems.Add("-");
                 _measurementsListView.Items.Add(item);
             }
@@ -214,18 +217,16 @@ namespace PulseMirror
             {
                 Text = "Measurements (SCPI)",
                 Location = new Point(820, 85),
-                Size = new Size(258, 618),
+                Size = new Size(348, 460),
                 Enabled = false
             };
-            _measurementsGroupBox.Controls.Add(measurementChannelLabel);
-            _measurementsGroupBox.Controls.Add(_measurementChannelComboBox);
             _measurementsGroupBox.Controls.Add(_readAllMeasurementsCheckBox);
             _measurementsGroupBox.Controls.Add(_measurementsListView);
 
             _screenPictureBox = new PictureBox
             {
-                Location = new Point(12, 230),
-                Size = new Size(796, 375),
+                Location = new Point(12, 150),
+                Size = new Size(796, 455),
                 BorderStyle = BorderStyle.FixedSingle,
                 SizeMode = PictureBoxSizeMode.Zoom,
                 BackColor = Color.Black
@@ -286,6 +287,56 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
                 "USBTMC direto via WinUSB.\n" +
                 "Formato: usbtmc://VIDxPID (ex.: usbtmc://1AB1x0588)\n" +
                 "Ou apenas 'usbtmc' para detectar o DS1052E automaticamente.");
+            
+            // ---- Channel control grid aligned with the measurement columns ----
+            // Absolute X of the ListView columns: Measurement=830, CH1=950, CH2=1045 (widths 120/95/95).
+            const int labelColX = 830;
+            const int ch1ColX = 950;
+            const int ch2ColX = 1045;
+            const int colWidth = 90;
+            const int rowEnableY = 5;
+            const int rowVScaleY = 32;
+            const int rowOffsetY = 69;
+            const int rowTimebaseY = 86;
+
+            // Row labels (first column)
+            vScaleLabel.Text = "V/div:";
+            vScaleLabel.Location = new Point(labelColX, rowVScaleY + 3);
+            offset1Label.Text = "Offset (V):";
+            offset1Label.Location = new Point(labelColX, rowOffsetY + 3);
+            tScaleLabel.Text = "Timebase s/div:";
+            tScaleLabel.Location = new Point(labelColX, rowTimebaseY + 3);
+
+            // Per-channel labels are redundant now: the column identifies the channel.
+            vScale2Label.Visible = false;
+            offset2Label.Visible = false;
+
+            // CH1 column
+            _channel1EnabledCheckBox.Location = new Point(ch1ColX, rowEnableY + 2);
+            _verticalScaleComboBox.Location = new Point(ch1ColX, rowVScaleY);
+            _verticalScaleComboBox.Width = colWidth;
+            _channel1OffsetNumeric.Location = new Point(ch1ColX, rowOffsetY);
+            _channel1OffsetNumeric.Width = colWidth;
+
+            // CH2 column
+            _channel2EnabledCheckBox.Location = new Point(ch2ColX, rowEnableY + 2);
+            _channel2ScaleComboBox.Location = new Point(ch2ColX, rowVScaleY);
+            _channel2ScaleComboBox.Width = colWidth;
+            _channel2OffsetNumeric.Location = new Point(ch2ColX, rowOffsetY);
+            _channel2OffsetNumeric.Width = colWidth;
+
+            // Timebase is shared by both channels: spans both columns.
+            _timebaseComboBox.Location = new Point(ch1ColX, rowTimebaseY);
+            _timebaseComboBox.Width = (ch2ColX + colWidth) - ch1ColX;
+
+            // Freed left area: toolbar row, then a taller screen.
+            _saveImageButton.Location = new Point(12, 47);
+            _showAllMeasurementsCheckBox.Location = new Point(150, 51);
+
+            _screenPictureBox.Location = new Point(12, 80);
+            _screenPictureBox.Size = new Size(796, 525);
+
+            _measurementsGroupBox.Location = new Point(820, 120);
         }
 
         /// <summary>
@@ -641,7 +692,7 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
 
                     if (!item.Checked)
                     {
-                        item.SubItems[1].Text = "-";
+                        ResetMeasurementItem(item);
                     }
                 }
             }
@@ -663,7 +714,7 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
             {
                 if (!e.Item.Checked)
                 {
-                    e.Item.SubItems[1].Text = "-";
+                    ResetMeasurementItem(e.Item);
                 }
 
                 bool allChecked = true;
@@ -690,8 +741,6 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
         /// </summary>
         private async Task UpdateMeasurementsAsync(IOscilloscope oscilloscope, CancellationToken token)
         {
-            int channel = _measurementChannelComboBox.SelectedIndex + 1;
-
             foreach (ListViewItem item in _measurementsListView.Items)
             {
                 if (token.IsCancellationRequested)
@@ -706,29 +755,51 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
 
                 var quantity = (MeasurementQuantity)item.Tag;
 
-                try
-                {
-                    double value = await oscilloscope.GetMeasurementAsync(channel, quantity);
-                    item.SubItems[1].Text = FormatMeasurement(quantity, value);
-                }
-                catch (OperationCanceledException)
-                {
-                    return;
-                }
-                catch (Exception ex)
+                // Column 1 = CH1, column 2 = CH2.
+                for (int channel = 1; channel <= 2; channel++)
                 {
                     if (token.IsCancellationRequested)
                     {
                         return;
                     }
 
-                    // Log only the first failure of each item to avoid flooding the log every cycle.
-                    if (item.SubItems[1].Text != "error")
+                    var subItem = item.SubItems[channel];
+
+                    // Skip channels that are disabled on the instrument.
+                    bool channelEnabled = channel == 1
+                        ? _channel1EnabledCheckBox.Checked
+                        : _channel2EnabledCheckBox.Checked;
+
+                    if (!channelEnabled)
                     {
-                        AppendLog($"ERROR reading {item.Text}: {ex.Message}");
+                        subItem.Text = "-";
+                        continue;
                     }
 
-                    item.SubItems[1].Text = "error";
+                    try
+                    {
+                        double value = await oscilloscope.GetMeasurementAsync(channel, quantity);
+                        subItem.Text = FormatMeasurement(quantity, value);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        return;
+                    }
+                    catch (Exception ex)
+                    {
+                        if (token.IsCancellationRequested)
+                        {
+                            return;
+                        }
+
+                        // Log only the first failure of each item to avoid flooding the log every cycle.
+                        if (subItem.Text != "error")
+                        {
+                            AppendLog($"ERROR reading {item.Text} (CH{channel}): {ex.Message}");
+                        }
+
+                        subItem.Text = "error";
+                    }
                 }
             }
         }
@@ -1058,6 +1129,14 @@ private static void SetNumericValueClamped(NumericUpDown numeric, double value)
 {
     decimal v = (decimal)value;
     numeric.Value = Math.Max(numeric.Minimum, Math.Min(numeric.Maximum, v));
+}
+
+private static void ResetMeasurementItem(ListViewItem item)
+{
+    for (int i = 1; i < item.SubItems.Count; i++)
+    {
+        item.SubItems[i].Text = "-";
+    }
 }
     }
 }
