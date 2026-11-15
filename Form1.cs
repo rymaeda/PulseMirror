@@ -21,7 +21,6 @@ namespace PulseMirror
         private readonly CheckBox _channel2EnabledCheckBox;
         private readonly ComboBox _channel2ScaleComboBox;
         private readonly CheckBox _channel1EnabledCheckBox;
-        private readonly CheckBox _showAllMeasurementsCheckBox;
         private readonly GroupBox _measurementsGroupBox;
         private readonly ComboBox _measurementChannelComboBox;
         private readonly CheckBox _readAllMeasurementsCheckBox;
@@ -60,7 +59,7 @@ namespace PulseMirror
             InitializeComponent();
 
             Text = "PulseMirror - Oscilloscope Viewer";
-            ClientSize = new Size(1180, 720);
+            ClientSize = new Size(1190, 690);
 
             // Fixed-size window: prevents accidental resizing/maximizing that
             // would otherwise require reflowing all the manually-positioned controls.
@@ -145,7 +144,8 @@ namespace PulseMirror
             _saveImageButton = new Button
             {
                 Text = "Save Image...",
-                Location = new Point(680, 47),
+                //Location = new Point(680, 47),
+                Location = new Point(1040, 665),
                 Width = 128,
                 Enabled = false
             };
@@ -159,16 +159,6 @@ namespace PulseMirror
                 Enabled = false
             };
             _channel1EnabledCheckBox.CheckedChanged += async (s, e) => await Channel1EnabledCheckBox_CheckedChangedAsync();
-
-            _showAllMeasurementsCheckBox = new CheckBox
-            {
-                Text = "Show all measurements",
-                Location = new Point(120, 82),
-                AutoSize = true,
-                Enabled = false
-            };
-            _showAllMeasurementsCheckBox.CheckedChanged += async (s, e) =>
-                await MeasurementCheckBox_CheckedChangedAsync(MeasurementType.All, _showAllMeasurementsCheckBox);
 
             var measurementChannelLabel = new Label { Text = "Channel:", Location = new Point(10, 24), AutoSize = true };
             _measurementChannelComboBox = new ComboBox
@@ -191,7 +181,7 @@ namespace PulseMirror
             _measurementsListView = new ListView
             {
                 Location = new Point(10, 50),
-                Size = new Size(328, 400),
+                Size = new Size(328, 350),
                 View = View.Details,
                 CheckBoxes = true,
                 FullRowSelect = true,
@@ -217,7 +207,7 @@ namespace PulseMirror
             {
                 Text = "Measurements (SCPI)",
                 Location = new Point(820, 85),
-                Size = new Size(348, 460),
+                Size = new Size(348, 410),
                 Enabled = false
             };
             _measurementsGroupBox.Controls.Add(_readAllMeasurementsCheckBox);
@@ -264,7 +254,6 @@ namespace PulseMirror
             Controls.Add(logLabel);
             Controls.Add(_logTextBox);
             Controls.Add(_channel1EnabledCheckBox);
-            Controls.Add(_showAllMeasurementsCheckBox);
             Controls.Add(_measurementsGroupBox);
 
             var offset1Label = new Label { Text = "CH1 Offset (V):", Location = new Point(12, 120), AutoSize = true };
@@ -330,11 +319,33 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
             _timebaseComboBox.Width = (ch2ColX + colWidth) - ch1ColX;
 
             // Freed left area: toolbar row, then a taller screen.
-            _saveImageButton.Location = new Point(12, 47);
-            _showAllMeasurementsCheckBox.Location = new Point(150, 51);
+            _saveImageButton.Location = new Point(1040, 640);
+            _saveImageButton.Width = 128;
 
-            _screenPictureBox.Location = new Point(12, 80);
-            _screenPictureBox.Size = new Size(796, 525);
+            // Connection controls go to the bottom-right corner, below the measurements panel.
+            resourceLabel.Location = new Point(830, 540);
+
+            _resourceTextBox.Location = new Point(930, 540);
+            _resourceTextBox.Width = 238;
+
+            _connectButton.Location = new Point(830, 590);
+            _connectButton.Width = 100;
+
+            _saveImageButton.Location = new Point(1040, 590);
+            _saveImageButton.Width = 128;
+
+            // Status wraps inside the right-hand panel instead of overflowing the window.
+            _statusLabel.MaximumSize = new Size(338, 0);
+            _statusLabel.Location = new Point(830, 625);
+
+            // The top row is now free: the screen can start at the top of the window.
+            _screenPictureBox.Location = new Point(12, 12);
+            _screenPictureBox.Size = new Size(796, 515);
+
+            // Message log moves up and gets more height.
+            logLabel.Location = new Point(12, 535);
+            _logTextBox.Location = new Point(12, 555);
+            _logTextBox.Size = new Size(796, 110);
 
             _measurementsGroupBox.Location = new Point(820, 120);
         }
@@ -392,7 +403,6 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
                 _channel2EnabledCheckBox.Enabled = true;
                 _saveImageButton.Enabled = true;
                 _channel1EnabledCheckBox.Enabled = true;
-                _showAllMeasurementsCheckBox.Enabled = true;
                 _channel1OffsetNumeric.Enabled = _channel1EnabledCheckBox.Checked;
                 _channel2OffsetNumeric.Enabled = _channel2EnabledCheckBox.Checked;
                 _measurementsGroupBox.Enabled = true;
