@@ -32,6 +32,13 @@ namespace PulseMirror
         private readonly ComboBox _triggerSourceComboBox;
         private readonly ComboBox _triggerModeComboBox;
         private bool _isUpdatingMeasurementSelection;
+        private readonly Button _autoChannel1Button;
+        private readonly Button _autoChannel2Button;
+
+        private const double TargetVerticalDivisions = 6;     // of 8 divisions
+        private const double TargetPeriods = 3;               // periods shown on screen
+        private const double HorizontalDivisions = 12;
+        private const int MaxAutoAdjustPasses = 3;
 
         private IOscilloscope _oscilloscope;
         private CancellationTokenSource _captureLoopCts;
@@ -325,7 +332,17 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
             _triggerGroupBox.Controls.Add(_triggerSourceComboBox);
             _triggerGroupBox.Controls.Add(triggerModeLabel);
             _triggerGroupBox.Controls.Add(_triggerModeComboBox);
+            var autoLabel = new Label { Text = "Auto-adjust:", AutoSize = true };
 
+            _autoChannel1Button = new Button { Text = "Auto CH1", Enabled = false };
+            _autoChannel1Button.Click += async (s, e) => await AutoAdjustChannelAsync(1);
+
+            _autoChannel2Button = new Button { Text = "Auto CH2", Enabled = false };
+            _autoChannel2Button.Click += async (s, e) => await AutoAdjustChannelAsync(2);
+
+            Controls.Add(autoLabel);
+            Controls.Add(_autoChannel1Button);
+            Controls.Add(_autoChannel2Button);
             Controls.Add(offset1Label);
             Controls.Add(_channel1OffsetNumeric);
             Controls.Add(offset2Label);
@@ -384,25 +401,43 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
             _timebaseComboBox.Location = new Point(channel1X, 92);
             _timebaseComboBox.Width = (channel2X + colWidth) - channel1X;
 
-            _measurementsGroupBox.Location = new Point(panelX, 120);
+            //var autoLabel = new Label { Text = "Auto-adjust:", AutoSize = true };
+            autoLabel.Location = new Point(labelX, 125);
+            _autoChannel1Button.Location = new Point(channel1X, 120);
+            _autoChannel1Button.Width = colWidth;
+            _autoChannel2Button.Location = new Point(channel2X, 120);
+            _autoChannel2Button.Width = colWidth;
+
+            _measurementsGroupBox.Location = new Point(panelX, 150);
             _measurementsGroupBox.Size = new Size(348, 410);
             _measurementsListView.Size = new Size(328, 350);
 
-            resourceLabel.Location = new Point(labelX, 540);
-            _resourceTextBox.Location = new Point(channel1X, 540);
+            resourceLabel.Location = new Point(labelX, 570);
+            _resourceTextBox.Location = new Point(channel1X, 570);
             _resourceTextBox.Width = 218;
 
-            _connectButton.Location = new Point(labelX, 590);
+            _connectButton.Location = new Point(labelX, 620);
             _connectButton.Width = 100;
-            _saveImageButton.Location = new Point(panelX + 220, 590);
+            _saveImageButton.Location = new Point(panelX + 220, 620);
             _saveImageButton.Width = 128;
 
             _statusLabel.MaximumSize = new Size(338, 0);
-            _statusLabel.Location = new Point(labelX, 625);
+            _statusLabel.Location = new Point(labelX, 655);
 
             // Right column: trigger, placed after the measurements panel.
             _triggerGroupBox.Location = new Point(_measurementsGroupBox.Right + 20, 12);
-            ClientSize = new Size(_triggerGroupBox.Right + 12, 690);
+            ClientSize = new Size(_triggerGroupBox.Right + 12, 720);
+
+
+            //_autoChannel1Button = new Button { Text = "Auto CH1", Enabled = false };
+            //_autoChannel1Button.Click += async (s, e) => await AutoAdjustChannelAsync(1);
+
+            //_autoChannel2Button = new Button { Text = "Auto CH2", Enabled = false };
+            //_autoChannel2Button.Click += async (s, e) => await AutoAdjustChannelAsync(2);
+
+            Controls.Add(autoLabel);
+            Controls.Add(_autoChannel1Button);
+            Controls.Add(_autoChannel2Button);
         }
 
         /// <summary>
@@ -465,6 +500,8 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
                 _timebaseComboBox.Enabled = true;
                 _channel2EnabledCheckBox.Enabled = true;
                 _saveImageButton.Enabled = true;
+                _autoChannel1Button.Enabled = true;
+                _autoChannel2Button.Enabled = true;
 
                 await _oscilloscope.ReturnToLocalAsync();
 
@@ -501,6 +538,8 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
             _channel1OffsetNumeric.Enabled = false;
             _channel2OffsetNumeric.Enabled = false;
             _saveImageButton.Enabled = false;
+            _autoChannel1Button.Enabled = false;
+            _autoChannel2Button.Enabled = false;
             _measurementsGroupBox.Enabled = false;
             foreach (ListViewItem item in _measurementsListView.Items)
             {
@@ -1278,6 +1317,72 @@ private static void ResetMeasurementItem(ListViewItem item)
     for (int i = 1; i < item.SubItems.Count; i++)
     {
         item.SubItems[i].Text = "-";
+    }
+}
+
+//private readonly Button _autoChannel1Button;
+//private readonly Button _autoChannel2Button;
+
+//private const double TargetVerticalDivisions = 6;     // of 8 divisions
+//private const double TargetPeriods = 3;               // periods shown on screen
+//private const double HorizontalDivisions = 12;
+//private const int MaxAutoAdjustPasses = 3;
+
+private async Task AutoAdjustChannelAsync(int channel)
+{
+    if (_oscilloscope == null || !_oscilloscope.IsConnected)
+    {
+        return;
+    }
+
+    try
+    {
+        AppendLog($"Auto-adjusting CH{channel}...");
+
+        // Reset to default settings before measurement.
+        await _oscilloscope.SetTriggerTypeAsync(TriggerType.Edge);
+        await _oscilloscope.SetTriggerSourceAsync(TriggerSource.Channel1);
+
+        // Enable the channel and set a default scale and position.
+        await _oscilloscope.SetChannelEnabledAsync(channel, true);
+        await _oscilloscope.SetChannelScaleAsync(channel, 0.01);
+        await _oscilloscope.SetChannelOffsetAsync(channel, 0);
+
+        // Use a faster timebase to find the signal more reliably.
+        await _oscilloscope.SetTimebaseAsync(0.00001);
+
+        // Wait briefly for the settings to take effect.
+        await Task.Delay(500);
+
+        // Measure the frequency and amplitude (Vpp) to determine the best settings.
+        double freq = await _oscilloscope.GetMeasurementAsync(channel, MeasurementQuantity.Frequency);
+        double vpp = await _oscilloscope.GetMeasurementAsync(channel, MeasurementQuantity.Vpp);
+
+        AppendLog($"Measured Freq: {freq} Hz, Vpp: {vpp} V");
+
+        // Calculate appropriate V/div and timebase settings based on the measurements.
+        double idealVScale = vpp / TargetVerticalDivisions;
+        double idealTScale = 1.0 / (freq * TargetPeriods);
+
+        // Apply the new settings, allowing some tolerance.
+        await _oscilloscope.SetChannelScaleAsync(channel, idealVScale);
+        await _oscilloscope.SetTimebaseAsync(idealTScale);
+
+        // Optionally, adjust the channel offset to center the waveform vertically.
+        double offset = -await _oscilloscope.GetMeasurementAsync(channel, MeasurementQuantity.Vmin) + 0.1;
+        await _oscilloscope.SetChannelOffsetAsync(channel, offset);
+
+        // Set a more sensible trigger level based on the signal.
+        double triggerLevel = await _oscilloscope.GetMeasurementAsync(channel, MeasurementQuantity.Vaverage);
+        await _oscilloscope.SetTriggerLevelAsync(triggerLevel);
+
+        AppendLog($"Auto-adjusted CH{channel}:");
+        AppendLog($"  V/div: {idealVScale:0.#####} V, Timebase: {idealTScale:0.#####} s/div, Offset: {offset:0.###} V");
+    }
+    catch (Exception ex)
+    {
+        AppendLog($"ERROR during auto-adjust: {ex.Message}");
+        MessageBox.Show(this, ex.Message, "Adjustment Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
 }
     }
