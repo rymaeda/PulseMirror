@@ -46,5 +46,17 @@ namespace PulseMirror.Instruments
         /// cannot be measured (e.g. channel off or no signal).
         /// </summary>
         Task<double> GetMeasurementAsync(int channel, MeasurementQuantity quantity);
+
+        Task<TriggerSettings> GetTriggerSettingsAsync();
+
+        Task SetTriggerTypeAsync(TriggerType type);
+        Task SetTriggerSourceAsync(TriggerSource source);
+        Task SetTriggerModeAsync(TriggerMode mode);
+        Task SetTriggerLevelAsync(double level);
+        Task SetTriggerSlopeAsync(TriggerSlope slope);
+        Task SetPulseWidthAsync(double width);
+        Task SetPulseConditionAsync(PulseCondition condition);
+        Task SetVideoStandardAsync(VideoStandard standard);
+        Task SetVideoLineAsync(int line);
     }
 }

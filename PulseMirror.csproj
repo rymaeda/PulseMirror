@@ -53,17 +53,28 @@
     <Compile Include="Form1.Designer.cs">
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>
+    <Compile Include="Controls\TriggerPanel.cs">
+      <SubType>Component</SubType>
+    </Compile>
     <Compile Include="Instruments\InstrumentIdentity.cs" />
     <Compile Include="Instruments\IOscilloscope.cs" />
     <Compile Include="Instruments\IScpiTransport.cs" />
     <Compile Include="Instruments\MeasurementQuantity.cs" />
     <Compile Include="Instruments\MeasurementType.cs" />
     <Compile Include="Instruments\OscilloscopeFactory.cs" />
+    <Compile Include="Instruments\PulseCondition.cs" />
     <Compile Include="Instruments\RigolDS1000EService.cs" />
     <Compile Include="Instruments\ScpiBlockReader.cs" />
     <Compile Include="Instruments\ScpiTransportFactory.cs" />
+    <Compile Include="Instruments\TriggerMode.cs" />
+    <Compile Include="Instruments\TriggerSettings.cs" />
+    <Compile Include="Instruments\TriggerSlope.cs" />
+    <Compile Include="Instruments\TriggerSource.cs" />
+    <Compile Include="Instruments\TriggerType.cs" />
     <Compile Include="Instruments\UsbTmc\UsbTmcTransport.cs" />
     <Compile Include="Instruments\NativeMethods.cs" />
+    <Compile Include="Instruments\VideoStandard.cs" />
+    <Compile Include="Services\TriggerService.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Instruments\UsbDeviceFinder.cs" />

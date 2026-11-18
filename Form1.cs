@@ -27,6 +27,10 @@ namespace PulseMirror
         private readonly ListView _measurementsListView;
         private readonly NumericUpDown _channel1OffsetNumeric;
         private readonly NumericUpDown _channel2OffsetNumeric;
+        private readonly GroupBox _triggerGroupBox;
+        private readonly ComboBox _triggerTypeComboBox;
+        private readonly ComboBox _triggerSourceComboBox;
+        private readonly ComboBox _triggerModeComboBox;
         private bool _isUpdatingMeasurementSelection;
 
         private IOscilloscope _oscilloscope;
@@ -54,12 +58,16 @@ namespace PulseMirror
             1, 2, 5
         };
 
+        private const int ScreenCaptureWidth = 320;
+        private const int ScreenCaptureHeight = 234;
+
         public Form1()
         {
             InitializeComponent();
 
             Text = "PulseMirror - Oscilloscope Viewer";
-            ClientSize = new Size(1190, 690);
+//            ClientSize = new Size(1190, 690);
+            ClientSize = new Size(1390, 690);
 
             // Fixed-size window: prevents accidental resizing/maximizing that
             // would otherwise require reflowing all the manually-positioned controls.
@@ -216,9 +224,9 @@ namespace PulseMirror
             _screenPictureBox = new PictureBox
             {
                 Location = new Point(12, 150),
-                Size = new Size(796, 455),
+                Size = new Size(ScreenCaptureWidth, ScreenCaptureHeight),
                 BorderStyle = BorderStyle.FixedSingle,
-                SizeMode = PictureBoxSizeMode.Zoom,
+                SizeMode = PictureBoxSizeMode.Normal,
                 BackColor = Color.Black
             };
 
@@ -256,18 +264,73 @@ namespace PulseMirror
             Controls.Add(_channel1EnabledCheckBox);
             Controls.Add(_measurementsGroupBox);
 
-            var offset1Label = new Label { Text = "CH1 Offset (V):", Location = new Point(12, 120), AutoSize = true };
-_channel1OffsetNumeric = CreateOffsetNumeric(new Point(110, 117));
+            var offset1Label = new Label { Text = "Offset (V):", AutoSize = true };
+_channel1OffsetNumeric = CreateOffsetNumeric(Point.Empty);
 _channel1OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeric_ValueChangedAsync(1, _channel1OffsetNumeric);
 
-var offset2Label = new Label { Text = "CH2 Offset (V):", Location = new Point(250, 120), AutoSize = true };
-_channel2OffsetNumeric = CreateOffsetNumeric(new Point(348, 117));
+var offset2Label = new Label { Text = "CH2 Offset (V):", AutoSize = true, Visible = false };
+_channel2OffsetNumeric = CreateOffsetNumeric(Point.Empty);
 _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeric_ValueChangedAsync(2, _channel2OffsetNumeric);
+
+            // ---- Trigger group (created before any layout code uses it) ----
+            _triggerGroupBox = new GroupBox
+            {
+                Text = "Trigger",
+                Size = new Size(210, 135),
+                Enabled = false
+            };
+
+            var triggerTypeLabel = new Label { Text = "Type:", Location = new Point(10, 28), AutoSize = true };
+            _triggerTypeComboBox = new ComboBox
+            {
+                Location = new Point(75, 25),
+                Width = 120,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            foreach (TriggerType type in Enum.GetValues(typeof(TriggerType)))
+            {
+                _triggerTypeComboBox.Items.Add(type);
+            }
+            _triggerTypeComboBox.SelectedIndexChanged += async (s, e) => await TriggerTypeComboBox_SelectedIndexChangedAsync();
+
+            var triggerSourceLabel = new Label { Text = "Source:", Location = new Point(10, 63), AutoSize = true };
+            _triggerSourceComboBox = new ComboBox
+            {
+                Location = new Point(75, 60),
+                Width = 120,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            foreach (TriggerSource source in Enum.GetValues(typeof(TriggerSource)))
+            {
+                _triggerSourceComboBox.Items.Add(source);
+            }
+            _triggerSourceComboBox.SelectedIndexChanged += async (s, e) => await TriggerSourceComboBox_SelectedIndexChangedAsync();
+
+            var triggerModeLabel = new Label { Text = "Mode:", Location = new Point(10, 98), AutoSize = true };
+            _triggerModeComboBox = new ComboBox
+            {
+                Location = new Point(75, 95),
+                Width = 120,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            foreach (TriggerMode mode in Enum.GetValues(typeof(TriggerMode)))
+            {
+                _triggerModeComboBox.Items.Add(mode);
+            }
+            _triggerModeComboBox.SelectedIndexChanged += async (s, e) => await TriggerModeComboBox_SelectedIndexChangedAsync();
+
+            _triggerGroupBox.Controls.Add(triggerTypeLabel);
+            _triggerGroupBox.Controls.Add(_triggerTypeComboBox);
+            _triggerGroupBox.Controls.Add(triggerSourceLabel);
+            _triggerGroupBox.Controls.Add(_triggerSourceComboBox);
+            _triggerGroupBox.Controls.Add(triggerModeLabel);
+            _triggerGroupBox.Controls.Add(_triggerModeComboBox);
 
             Controls.Add(offset1Label);
             Controls.Add(_channel1OffsetNumeric);
             Controls.Add(offset2Label);
             Controls.Add(_channel2OffsetNumeric);
+            Controls.Add(_triggerGroupBox);
 
             FormClosing += Form1_FormClosing;
 
@@ -276,78 +339,70 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
                 "USBTMC direto via WinUSB.\n" +
                 "Formato: usbtmc://VIDxPID (ex.: usbtmc://1AB1x0588)\n" +
                 "Ou apenas 'usbtmc' para detectar o DS1052E automaticamente.");
-            
-            // ---- Channel control grid aligned with the measurement columns ----
-            // Absolute X of the ListView columns: Measurement=830, CH1=950, CH2=1045 (widths 120/95/95).
-            const int labelColX = 830;
-            const int ch1ColX = 950;
-            const int ch2ColX = 1045;
+
+            // ================= Consolidated layout (single pass) =================
             const int colWidth = 90;
-            const int rowEnableY = 5;
-            const int rowVScaleY = 32;
-            const int rowOffsetY = 69;
-            const int rowTimebaseY = 86;
 
-            // Row labels (first column)
+            // Left: instrument screen, then the message log aligned with it.
+            _screenPictureBox.Location = new Point(12, 12);
+            _screenPictureBox.ClientSize = new Size(ScreenCaptureWidth * 2, ScreenCaptureHeight * 2);
+            _screenPictureBox.SizeMode = PictureBoxSizeMode.Zoom;
+
+            logLabel.Location = new Point(_screenPictureBox.Left, _screenPictureBox.Bottom + 8);
+            _logTextBox.Location = new Point(_screenPictureBox.Left, logLabel.Bottom + 4);
+            _logTextBox.Size = new Size(_screenPictureBox.Width, 110);
+
+            // Middle column: channel controls, measurements, connection.
+            int panelX = _screenPictureBox.Right + 20;
+            int labelX = panelX + 10;
+            int channel1X = panelX + 130;   // aligns with the CH1 column of the ListView
+            int channel2X = panelX + 225;   // aligns with the CH2 column of the ListView
+
             vScaleLabel.Text = "V/div:";
-            vScaleLabel.Location = new Point(labelColX, rowVScaleY + 3);
-            offset1Label.Text = "Offset (V):";
-            offset1Label.Location = new Point(labelColX, rowOffsetY + 3);
+            vScaleLabel.Location = new Point(labelX, 35);
+            offset1Label.Location = new Point(labelX, 62);
             tScaleLabel.Text = "Timebase s/div:";
-            tScaleLabel.Location = new Point(labelColX, rowTimebaseY + 3);
+            tScaleLabel.Location = new Point(labelX, 95);
 
-            // Per-channel labels are redundant now: the column identifies the channel.
+            // Per-channel labels are redundant: the column identifies the channel.
             vScale2Label.Visible = false;
-            offset2Label.Visible = false;
 
-            // CH1 column
-            _channel1EnabledCheckBox.Location = new Point(ch1ColX, rowEnableY + 2);
-            _verticalScaleComboBox.Location = new Point(ch1ColX, rowVScaleY);
+            _channel1EnabledCheckBox.Location = new Point(channel1X, 7);
+            _channel2EnabledCheckBox.Location = new Point(channel2X, 7);
+
+            _verticalScaleComboBox.Location = new Point(channel1X, 32);
             _verticalScaleComboBox.Width = colWidth;
-            _channel1OffsetNumeric.Location = new Point(ch1ColX, rowOffsetY);
-            _channel1OffsetNumeric.Width = colWidth;
-
-            // CH2 column
-            _channel2EnabledCheckBox.Location = new Point(ch2ColX, rowEnableY + 2);
-            _channel2ScaleComboBox.Location = new Point(ch2ColX, rowVScaleY);
+            _channel2ScaleComboBox.Location = new Point(channel2X, 32);
             _channel2ScaleComboBox.Width = colWidth;
-            _channel2OffsetNumeric.Location = new Point(ch2ColX, rowOffsetY);
+
+            _channel1OffsetNumeric.Location = new Point(channel1X, 59);
+            _channel1OffsetNumeric.Width = colWidth;
+            _channel2OffsetNumeric.Location = new Point(channel2X, 59);
             _channel2OffsetNumeric.Width = colWidth;
 
-            // Timebase is shared by both channels: spans both columns.
-            _timebaseComboBox.Location = new Point(ch1ColX, rowTimebaseY);
-            _timebaseComboBox.Width = (ch2ColX + colWidth) - ch1ColX;
+            // Timebase is shared: spans both channel columns.
+            _timebaseComboBox.Location = new Point(channel1X, 92);
+            _timebaseComboBox.Width = (channel2X + colWidth) - channel1X;
 
-            // Freed left area: toolbar row, then a taller screen.
-            _saveImageButton.Location = new Point(1040, 640);
-            _saveImageButton.Width = 128;
+            _measurementsGroupBox.Location = new Point(panelX, 120);
+            _measurementsGroupBox.Size = new Size(348, 410);
+            _measurementsListView.Size = new Size(328, 350);
 
-            // Connection controls go to the bottom-right corner, below the measurements panel.
-            resourceLabel.Location = new Point(830, 540);
+            resourceLabel.Location = new Point(labelX, 540);
+            _resourceTextBox.Location = new Point(channel1X, 540);
+            _resourceTextBox.Width = 218;
 
-            _resourceTextBox.Location = new Point(930, 540);
-            _resourceTextBox.Width = 238;
-
-            _connectButton.Location = new Point(830, 590);
+            _connectButton.Location = new Point(labelX, 590);
             _connectButton.Width = 100;
-
-            _saveImageButton.Location = new Point(1040, 590);
+            _saveImageButton.Location = new Point(panelX + 220, 590);
             _saveImageButton.Width = 128;
 
-            // Status wraps inside the right-hand panel instead of overflowing the window.
             _statusLabel.MaximumSize = new Size(338, 0);
-            _statusLabel.Location = new Point(830, 625);
+            _statusLabel.Location = new Point(labelX, 625);
 
-            // The top row is now free: the screen can start at the top of the window.
-            _screenPictureBox.Location = new Point(12, 12);
-            _screenPictureBox.Size = new Size(796, 515);
-
-            // Message log moves up and gets more height.
-            logLabel.Location = new Point(12, 535);
-            _logTextBox.Location = new Point(12, 555);
-            _logTextBox.Size = new Size(796, 110);
-
-            _measurementsGroupBox.Location = new Point(820, 120);
+            // Right column: trigger, placed after the measurements panel.
+            _triggerGroupBox.Location = new Point(_measurementsGroupBox.Right + 20, 12);
+            ClientSize = new Size(_triggerGroupBox.Right + 12, 690);
         }
 
         /// <summary>
@@ -397,7 +452,8 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
                 AppendLog($"Connected: {_oscilloscope.ModelName} (SN {_oscilloscope.SerialNumber})");
 
                 await SyncControlsWithInstrumentAsync();
-
+                await SyncTriggerControlsAsync();
+                _triggerGroupBox.Enabled = true;
                 _verticalScaleComboBox.Enabled = true;
                 _timebaseComboBox.Enabled = true;
                 _channel2EnabledCheckBox.Enabled = true;
@@ -454,9 +510,85 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
             _statusLabel.Text = "Disconnected";
             _statusLabel.ForeColor = Color.Firebrick;
             _screenPictureBox.Image = null;
+            _triggerGroupBox.Enabled = false;
             AppendLog("Disconnected.");
         }
+        // Add these methods inside Form1 class
+        private async Task SyncTriggerControlsAsync()
+        {
+            if (_oscilloscope == null || !_oscilloscope.IsConnected)
+            {
+                return;
+            }
 
+            _isSyncingControls = true;
+            try
+            {
+                TriggerSettings settings = await _oscilloscope.GetTriggerSettingsAsync();
+                _triggerTypeComboBox.SelectedItem = settings.Type;
+                _triggerSourceComboBox.SelectedItem = settings.Source;
+                _triggerModeComboBox.SelectedItem = settings.Mode;
+            }
+            finally
+            {
+                _isSyncingControls = false;
+            }
+        }
+
+        private async Task TriggerTypeComboBox_SelectedIndexChangedAsync()
+        {
+            if (_isSyncingControls || _oscilloscope == null || !_oscilloscope.IsConnected || _triggerTypeComboBox.SelectedItem == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _oscilloscope.SetTriggerTypeAsync((TriggerType)_triggerTypeComboBox.SelectedItem);
+                await SyncTriggerControlsAsync();
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ERROR setting trigger type: {ex.Message}");
+                MessageBox.Show(this, ex.Message, "Communication Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private async Task TriggerSourceComboBox_SelectedIndexChangedAsync()
+        {
+            if (_isSyncingControls || _oscilloscope == null || !_oscilloscope.IsConnected || _triggerSourceComboBox.SelectedItem == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _oscilloscope.SetTriggerSourceAsync((TriggerSource)_triggerSourceComboBox.SelectedItem);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ERROR setting trigger source: {ex.Message}");
+                MessageBox.Show(this, ex.Message, "Communication Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private async Task TriggerModeComboBox_SelectedIndexChangedAsync()
+        {
+            if (_isSyncingControls || _oscilloscope == null || !_oscilloscope.IsConnected || _triggerModeComboBox.SelectedItem == null)
+            {
+                return;
+            }
+
+            try
+            {
+                await _oscilloscope.SetTriggerModeAsync((TriggerMode)_triggerModeComboBox.SelectedItem);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ERROR setting trigger mode: {ex.Message}");
+                MessageBox.Show(this, ex.Message, "Communication Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
         private async Task SyncControlsWithInstrumentAsync()
         {
             _isSyncingControls = true;
