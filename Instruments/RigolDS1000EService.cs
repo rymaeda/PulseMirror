@@ -171,6 +171,14 @@ namespace PulseMirror.Instruments
         }
 
         /// <summary>
+        /// Runs the instrument's waveform auto-setup (':AUTO'), the same as pressing the AUTO key.
+        /// </summary>
+        public Task AutoSetAsync()
+        {
+            return WriteAsync(":AUTO");
+        }
+
+        /// <summary>
         /// Single place that maps a measurement to its SCPI command.
         /// The DS1000E exposes ':MEASure:TOTal' to toggle the full measurement panel.
         /// </summary>
@@ -235,6 +243,7 @@ namespace PulseMirror.Instruments
 
         private Task<string> QueryAsync(string scpiCommand)
         {
+            System.Diagnostics.Debug.WriteLine($"[SCPI] > {scpiCommand}");
             return ExecuteAsync(
                 $"querying '{scpiCommand}'",
                 async transport =>

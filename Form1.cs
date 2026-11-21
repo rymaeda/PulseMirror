@@ -32,14 +32,10 @@ namespace PulseMirror
         private readonly ComboBox _triggerSourceComboBox;
         private readonly ComboBox _triggerModeComboBox;
         private bool _isUpdatingMeasurementSelection;
-        private readonly Button _autoChannel1Button;
-        private readonly Button _autoChannel2Button;
+        private readonly Button _autoButton;
 
-        private const double TargetVerticalDivisions = 6;     // of 8 divisions
-        private const double TargetPeriods = 3;               // periods shown on screen
-        private const double HorizontalDivisions = 12;
-        private const int MaxAutoAdjustPasses = 3;
-
+        // Time given to the instrument to finish :AUTO before its settings are read back.
+        private const int AutoSetSettleMs = 2500;
         private IOscilloscope _oscilloscope;
         private CancellationTokenSource _captureLoopCts;
         private Task _captureLoopTask;
@@ -333,16 +329,12 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
             _triggerGroupBox.Controls.Add(triggerModeLabel);
             _triggerGroupBox.Controls.Add(_triggerModeComboBox);
             var autoLabel = new Label { Text = "Auto-adjust:", AutoSize = true };
-
-            _autoChannel1Button = new Button { Text = "Auto CH1", Enabled = false };
-            _autoChannel1Button.Click += async (s, e) => await AutoAdjustChannelAsync(1);
-
-            _autoChannel2Button = new Button { Text = "Auto CH2", Enabled = false };
-            _autoChannel2Button.Click += async (s, e) => await AutoAdjustChannelAsync(2);
+            _autoButton = new Button { Text = "Auto", Enabled = false };
+            _autoButton.Click += async (s, e) => await AutoButton_ClickAsync();
+            Controls.Add(_autoButton);
 
             Controls.Add(autoLabel);
-            Controls.Add(_autoChannel1Button);
-            Controls.Add(_autoChannel2Button);
+
             Controls.Add(offset1Label);
             Controls.Add(_channel1OffsetNumeric);
             Controls.Add(offset2Label);
@@ -403,10 +395,8 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
 
             //var autoLabel = new Label { Text = "Auto-adjust:", AutoSize = true };
             autoLabel.Location = new Point(labelX, 125);
-            _autoChannel1Button.Location = new Point(channel1X, 120);
-            _autoChannel1Button.Width = colWidth;
-            _autoChannel2Button.Location = new Point(channel2X, 120);
-            _autoChannel2Button.Width = colWidth;
+            _autoButton.Location = new Point(labelX, 120);
+            _autoButton.Width = 100;
 
             _measurementsGroupBox.Location = new Point(panelX, 150);
             _measurementsGroupBox.Size = new Size(348, 410);
@@ -435,9 +425,6 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
             //_autoChannel2Button = new Button { Text = "Auto CH2", Enabled = false };
             //_autoChannel2Button.Click += async (s, e) => await AutoAdjustChannelAsync(2);
 
-            Controls.Add(autoLabel);
-            Controls.Add(_autoChannel1Button);
-            Controls.Add(_autoChannel2Button);
         }
 
         /// <summary>
@@ -500,8 +487,7 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
                 _timebaseComboBox.Enabled = true;
                 _channel2EnabledCheckBox.Enabled = true;
                 _saveImageButton.Enabled = true;
-                _autoChannel1Button.Enabled = true;
-                _autoChannel2Button.Enabled = true;
+                _autoButton.Enabled = true;
 
                 await _oscilloscope.ReturnToLocalAsync();
 
@@ -513,6 +499,7 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
                 _statusLabel.ForeColor = Color.Firebrick;
                 AppendLog($"ERROR connecting: {ex.Message}");
                 MessageBox.Show(this, ex.Message, "Connection Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                (_oscilloscope as IDisposable)?.Dispose();
                 _oscilloscope = null;
             }
             finally
@@ -538,8 +525,7 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
             _channel1OffsetNumeric.Enabled = false;
             _channel2OffsetNumeric.Enabled = false;
             _saveImageButton.Enabled = false;
-            _autoChannel1Button.Enabled = false;
-            _autoChannel2Button.Enabled = false;
+            _autoButton.Enabled = false;
             _measurementsGroupBox.Enabled = false;
             foreach (ListViewItem item in _measurementsListView.Items)
             {
@@ -567,6 +553,11 @@ _channel2OffsetNumeric.ValueChanged += async (s, e) => await ChannelOffsetNumeri
                 _triggerTypeComboBox.SelectedItem = settings.Type;
                 _triggerSourceComboBox.SelectedItem = settings.Source;
                 _triggerModeComboBox.SelectedItem = settings.Mode;
+            }
+            catch (Exception ex)
+            {
+                // Trigger readout is optional: do not abort the connection.
+                AppendLog($"WARNING: could not read trigger settings: {ex.Message}");
             }
             finally
             {
@@ -1319,71 +1310,161 @@ private static void ResetMeasurementItem(ListViewItem item)
         item.SubItems[i].Text = "-";
     }
 }
+        /// <summary>
+        /// Sends the instrument's own :AUTO command, then reads back the new
+        /// settings so the controls match the instrument.
+        /// </summary>
+        private async Task AutoButton_ClickAsync()
+        {
+            IOscilloscope oscilloscope = _oscilloscope;
+            if (oscilloscope == null || !oscilloscope.IsConnected)
+            {
+                return;
+            }
 
-//private readonly Button _autoChannel1Button;
-//private readonly Button _autoChannel2Button;
+            _autoButton.Enabled = false;
 
-//private const double TargetVerticalDivisions = 6;     // of 8 divisions
-//private const double TargetPeriods = 3;               // periods shown on screen
-//private const double HorizontalDivisions = 12;
-//private const int MaxAutoAdjustPasses = 3;
+            try
+            {
+                AppendLog("Auto: running the instrument auto setup...");
+                await oscilloscope.AutoSetAsync();
 
-private async Task AutoAdjustChannelAsync(int channel)
-{
-    if (_oscilloscope == null || !_oscilloscope.IsConnected)
-    {
-        return;
-    }
+                // The instrument needs a moment to finish the auto setup.
+                await Task.Delay(AutoSetSettleMs);
 
-    try
-    {
-        AppendLog($"Auto-adjusting CH{channel}...");
+                // Ignore the result if the user disconnected in the meantime.
+                if (_oscilloscope != oscilloscope || !oscilloscope.IsConnected)
+                {
+                    return;
+                }
 
-        // Reset to default settings before measurement.
-        await _oscilloscope.SetTriggerTypeAsync(TriggerType.Edge);
-        await _oscilloscope.SetTriggerSourceAsync(TriggerSource.Channel1);
+                await SyncControlsWithInstrumentAsync();
+                await SyncTriggerControlsAsync();
+                await RefreshTimebaseAsync(oscilloscope);
+                await RefreshOffsetsAsync(oscilloscope);
 
-        // Enable the channel and set a default scale and position.
-        await _oscilloscope.SetChannelEnabledAsync(channel, true);
-        await _oscilloscope.SetChannelScaleAsync(channel, 0.01);
-        await _oscilloscope.SetChannelOffsetAsync(channel, 0);
+                _channel1OffsetNumeric.Enabled = _channel1EnabledCheckBox.Checked;
+                _channel2OffsetNumeric.Enabled = _channel2EnabledCheckBox.Checked;
 
-        // Use a faster timebase to find the signal more reliably.
-        await _oscilloscope.SetTimebaseAsync(0.00001);
+                AppendLog("Auto: done.");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"ERROR running auto setup: {ex.Message}");
+                MessageBox.Show(this, ex.Message, "Communication Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                _autoButton.Enabled = _oscilloscope != null && _oscilloscope.IsConnected;
+            }
+        }
+        /// <summary>
+        /// Reads the timebase until it is stable (the instrument may still be
+        /// settling after :AUTO) and shows it in the s/div combo box.
+        /// </summary>
+        private async Task RefreshTimebaseAsync(IOscilloscope oscilloscope)
+        {
+            const int maxReads = 6;
+            const int pollIntervalMs = 500;
 
-        // Wait briefly for the settings to take effect.
-        await Task.Delay(500);
+            double timebase = await oscilloscope.GetTimebaseAsync();
 
-        // Measure the frequency and amplitude (Vpp) to determine the best settings.
-        double freq = await _oscilloscope.GetMeasurementAsync(channel, MeasurementQuantity.Frequency);
-        double vpp = await _oscilloscope.GetMeasurementAsync(channel, MeasurementQuantity.Vpp);
+            for (int i = 1; i < maxReads; i++)
+            {
+                await Task.Delay(pollIntervalMs);
+                double next = await oscilloscope.GetTimebaseAsync();
 
-        AppendLog($"Measured Freq: {freq} Hz, Vpp: {vpp} V");
+                bool stable = Math.Abs(next - timebase) <= timebase * 1e-6;
+                timebase = next;
 
-        // Calculate appropriate V/div and timebase settings based on the measurements.
-        double idealVScale = vpp / TargetVerticalDivisions;
-        double idealTScale = 1.0 / (freq * TargetPeriods);
+                if (stable)
+                {
+                    break;
+                }
+            }
 
-        // Apply the new settings, allowing some tolerance.
-        await _oscilloscope.SetChannelScaleAsync(channel, idealVScale);
-        await _oscilloscope.SetTimebaseAsync(idealTScale);
+            // Pick the closest standard scale by ratio, since the scales are logarithmic.
+            int closestIndex = 0;
+            double closestDistance = double.MaxValue;
 
-        // Optionally, adjust the channel offset to center the waveform vertically.
-        double offset = -await _oscilloscope.GetMeasurementAsync(channel, MeasurementQuantity.Vmin) + 0.1;
-        await _oscilloscope.SetChannelOffsetAsync(channel, offset);
+            for (int i = 0; i < TimebaseScales.Length; i++)
+            {
+                double distance = Math.Abs(Math.Log(TimebaseScales[i] / timebase));
+                if (distance < closestDistance)
+                {
+                    closestDistance = distance;
+                    closestIndex = i;
+                }
+            }
 
-        // Set a more sensible trigger level based on the signal.
-        double triggerLevel = await _oscilloscope.GetMeasurementAsync(channel, MeasurementQuantity.Vaverage);
-        await _oscilloscope.SetTriggerLevelAsync(triggerLevel);
+            // Guard: do not send the value back to the instrument.
+            bool previous = _isSyncingControls;
+            _isSyncingControls = true;
+            try
+            {
+                _timebaseComboBox.SelectedIndex = closestIndex;
+            }
+            finally
+            {
+                _isSyncingControls = previous;
+            }
 
-        AppendLog($"Auto-adjusted CH{channel}:");
-        AppendLog($"  V/div: {idealVScale:0.#####} V, Timebase: {idealTScale:0.#####} s/div, Offset: {offset:0.###} V");
-    }
-    catch (Exception ex)
-    {
-        AppendLog($"ERROR during auto-adjust: {ex.Message}");
-        MessageBox.Show(this, ex.Message, "Adjustment Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-    }
-}
+            AppendLog($"Auto: timebase is now {FormatScale(timebase, "s")}.");
+        }
+
+        /// <summary>
+        /// Reads the vertical offset of CH1 and CH2 from the instrument and
+        /// shows them in the offset controls (without sending them back).
+        /// </summary>
+        private async Task RefreshOffsetsAsync(IOscilloscope oscilloscope)
+        {
+            double? offset1 = null;
+            double? offset2 = null;
+
+            try
+            {
+                offset1 = await oscilloscope.GetChannelOffsetAsync(1);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"WARNING: could not read CH1 offset: {ex.Message}");
+            }
+
+            try
+            {
+                offset2 = await oscilloscope.GetChannelOffsetAsync(2);
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"WARNING: could not read CH2 offset: {ex.Message}");
+            }
+
+            // Guard: do not send the values back to the instrument.
+            bool previous = _isSyncingControls;
+            _isSyncingControls = true;
+            try
+            {
+                if (offset1.HasValue)
+                {
+                    SetNumericValueClamped(_channel1OffsetNumeric, offset1.Value);
+                }
+
+                if (offset2.HasValue)
+                {
+                    SetNumericValueClamped(_channel2OffsetNumeric, offset2.Value);
+                }
+            }
+            finally
+            {
+                _isSyncingControls = previous;
+            }
+
+            AppendLog($"Auto: offsets are now CH1 {FormatOffset(offset1)}, CH2 {FormatOffset(offset2)}.");
+        }
+
+        private static string FormatOffset(double? offset)
+        {
+            return offset.HasValue ? $"{offset.Value:0.###} V" : "n/a";
+        }
     }
 }

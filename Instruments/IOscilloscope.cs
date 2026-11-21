@@ -58,5 +58,9 @@ namespace PulseMirror.Instruments
         Task SetPulseConditionAsync(PulseCondition condition);
         Task SetVideoStandardAsync(VideoStandard standard);
         Task SetVideoLineAsync(int line);
+        /// <summary>
+        /// Triggers the instrument's own waveform auto-setup (equivalent to the front-panel AUTO key).
+        /// </summary>
+        Task AutoSetAsync();
     }
 }
